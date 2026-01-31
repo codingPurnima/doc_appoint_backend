@@ -68,3 +68,27 @@ def book_appointment(
         "message": "Appointment booked successfully",
         "appointment_id": appointment.id
     }
+
+
+@router.patch("/{appointment_id}/complete")
+def complete_appointment(
+    appointment_id: int,
+    db: Session= Depends(get_db),
+    current_user= Depends(get_current_user)
+):
+    if current_user.role != RoleEnum.doctor:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    appointment=(
+        db.query(Appointment)
+        .filter(Appointment.id== appointment_id)
+        .first()
+    )
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    
+    appointment.status= StatusEnum.completed
+    db.commit()
+
+    return {"message": "Appointment marked as completed"}
