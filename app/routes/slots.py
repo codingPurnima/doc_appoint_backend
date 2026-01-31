@@ -83,3 +83,49 @@ def generate_slots(
     }
 
 
+@router.get("")
+def get_slots(
+    date: date= Query(...), # ... means that it is a required Python parameter which must be provided and that it has no default value
+    db: Session= Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    slots=(
+        db.query(Slots)
+        .filter(
+            Slots.date == date,
+            Slots.doctor_id == current_user.id
+        )
+        .order_by(Slots.start_time)
+        .all()
+    )
+    return slots
+
+
+@router.patch("/{slot_id}/freeze")
+def toggle_freeze_slot(
+    slot_id: int,
+    db: Session= Depends(get_db),
+    current_user= Depends(get_current_user)
+):
+    if current_user.role != RoleEnum.doctor:
+        raise HTTPException(status_code= 403, detail='Not authorized')
+    
+    slot=(
+        db.query(Slots)
+        .filter(
+            Slots.id == slot_id,
+            Slots.doctor_id== current_user.id
+        )
+        .first()
+    )
+
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    if slot.status == StatusEnum.booked:
+        raise HTTPException(status_code=400, detail="Cannot freeze booked slot")
+
+    slot.status = StatusEnum.frozen if slot.status == StatusEnum.available else StatusEnum.available
+    db.commit()
+
+    return {"message": f"Slot marked as {slot.status}"}
