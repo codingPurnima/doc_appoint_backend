@@ -2,18 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.slot import Slots
+from app.models.user import User
 from app.models.appointment import Appointment
 from app.schemas.appointment import AppointmentCreate
 from app.core.security import get_current_user
 from app.models.enums import StatusEnum, RoleEnum
 
-router = APIRouter(prefix="/appointments", tags=["Appointments"])
+router = APIRouter(tags=["Appointments"])
 
 @router.post("/book", status_code=status.HTTP_201_CREATED)
 def book_appointment(
     data: AppointmentCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User= Depends(get_current_user)
 ):
     # current_user.role is stored as RoleEnum; compare against RoleEnum.patient
     if current_user.role != RoleEnum.patient:
@@ -74,7 +75,7 @@ def book_appointment(
 def complete_appointment(
     appointment_id: int,
     db: Session= Depends(get_db),
-    current_user= Depends(get_current_user)
+    current_user: User= Depends(get_current_user)
 ):
     if current_user.role != RoleEnum.doctor:
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -92,3 +93,57 @@ def complete_appointment(
     db.commit()
 
     return {"message": "Appointment marked as completed"}
+
+
+@router.get("/me")
+def get_my_appointments(
+    current_user: User = Depends(get_current_user),
+    db: Session= Depends(get_db)
+):
+    if current_user.role!= RoleEnum.patient:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    results=(
+        db.query(Appointment, Slots)
+        .join(Slots, Appointment.slot_id== Slots.id)
+        .filter(Appointment.patient_id== current_user.id)
+        .order_by(Slots.date.desc())
+        .all()
+    )
+
+    return [
+        {
+            "appointment_id": appointment.id,
+            "status": appointment.status,
+            "date": slot.date,
+            "start_time": slot.start_time,
+            "end_time": slot.end_time
+        }
+        for appointment, slot in results
+    ]
+
+
+@router.put("/{appointment_id}/cancel")
+def cancel_appointment(
+    appointment_id: int,
+    current_user: User= Depends(get_current_user),
+    db: Session= Depends(get_db)
+):
+    appointment= db.query(Appointment).filter(
+        Appointment.id== appointment_id,
+        Appointment.patient_id== current_user.id
+    ).first()
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    
+    if appointment.status != StatusEnum.booked:
+        raise HTTPException(status_code=400, detail="Cannot cancel")
+    
+    slot= db.query(Slots).filter(Slots.id== appointment.slot_id).first()
+    appointment.status = StatusEnum.cancelled
+    slot.status = StatusEnum.available
+
+    db.commit()
+
+    return {"message": "Appointment cancelled successfully"}
