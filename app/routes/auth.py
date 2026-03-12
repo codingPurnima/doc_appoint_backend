@@ -3,8 +3,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
-from app.core.security import get_hashed_password, create_access_token, verify_password
+from app.schemas.user import UserCreate, UserLogin, UserResponse, Token, RefreshRequest
+from app.core.security import create_refresh_token, get_hashed_password, create_access_token, verify_password, decode_refresh_token
 from app.models.enums import RoleEnum
 from app.core.config import settings
 
@@ -85,10 +85,41 @@ def login(
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    token=create_access_token({"sub": user.name})
+    access_token=create_access_token({"sub": user.name})
+    refresh_token= create_refresh_token({"sub": user.name})
 
     return{
-        "access_token": token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer"
     }
 
+
+# REFRESH TOKEN
+@router.post("/auth/refresh")
+def refresh_token(
+    request: RefreshRequest,
+    db: Session = Depends(get_db)
+):
+    username = decode_refresh_token(request.refresh_token)
+
+    if username is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+
+    user = db.query(User).filter(User.name == username).first()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+
+    new_access_token = create_access_token({"sub": user.name})
+
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer"
+    }

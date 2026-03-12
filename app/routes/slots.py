@@ -21,23 +21,15 @@ def minutes_to_time(m):
 
 router = APIRouter(tags=["Slots"])
 
-@router.post("/generate")
-def generate_slots(
-    request: SlotGenerateRequest,
-    db: Session= Depends(get_db),
-    current_user= Depends(get_current_user)
-):
-    # current_user.role is an instance of RoleEnum; compare against RoleEnum.doctor
-    if current_user.role != RoleEnum.doctor:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
+# Helper function to generate slots automatically
+def generate_slots_for_date(db, doctor, request):
     slot_exists = db.query(Slots).filter(
-        Slots.doctor_id == current_user.id,
+        Slots.doctor_id == doctor.id,
         Slots.date == request.date
     ).first()
 
     if slot_exists:
-        raise HTTPException(status_code=400, detail="Slots for this date exist")
+        return 0
     
     start_minutes = time_to_minutes(request.day_start)
     end_minutes = time_to_minutes(request.day_end)
@@ -64,7 +56,7 @@ def generate_slots(
             continue
 
         slot = Slots(
-            doctor_id=current_user.id,
+            doctor_id=doctor.id,
             date=request.date,
             start_time=minutes_to_time(current),
             end_time=minutes_to_time(current + duration),
@@ -76,6 +68,23 @@ def generate_slots(
         current += duration
 
     db.commit()
+
+    return slots_created
+    
+
+
+# this is now just a wrapper for the helper function
+@router.post("/generate")
+def generate_slots(
+    request: SlotGenerateRequest,
+    db: Session= Depends(get_db),
+    current_user= Depends(get_current_user)
+):
+    # current_user.role is an instance of RoleEnum; compare against RoleEnum.doctor, earlier you were using string
+    if current_user.role != RoleEnum.doctor:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    slots_created= generate_slots_for_date(db, current_user, request)
 
     return {
         "message": "Slots generated successfully",
@@ -94,6 +103,23 @@ def get_slots(
         .filter(
             Slots.date == date,
             Slots.doctor_id == current_user.id
+        )
+        .order_by(Slots.start_time)
+        .all()
+    )
+    return slots
+
+
+@router.get("/available")
+def get_available_slots(
+    date: date= Query(...),
+    db: Session= Depends(get_db)
+):
+    slots = (
+        db.query(Slots)
+        .filter(
+            Slots.date == date,
+            Slots.status == StatusEnum.available
         )
         .order_by(Slots.start_time)
         .all()
