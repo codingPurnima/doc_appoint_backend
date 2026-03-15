@@ -4,9 +4,10 @@ from app.database import get_db
 from app.models.slot import Slots
 from app.models.user import User
 from app.models.appointment import Appointment
-from app.schemas.appointment import AppointmentCreate
+from app.schemas.appointment import AppointmentCreate, DoctorAppointmentResponse
 from app.core.security import get_current_user
 from app.models.enums import StatusEnum, RoleEnum
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(tags=["Appointments"])
 
@@ -85,12 +86,26 @@ def complete_appointment(
         .filter(Appointment.id== appointment_id)
         .first()
     )
+    slot=(
+        db.query(Slots)
+        .filter(Slots.id==appointment.slot_id)
+        .first()
+    )
 
     if not appointment:
         raise HTTPException(status_code=404, detail="Appointment not found")
     
     appointment.status= StatusEnum.completed
-    db.commit()
+    slot.status= StatusEnum.completed
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail= "Slot already booked"
+        )
+
 
     return {"message": "Appointment marked as completed"}
 
@@ -122,7 +137,7 @@ def get_my_appointments(
         for appointment, slot in results
     ]
 
-@router.get("/doctor")
+@router.get("/doctor", response_model=list[DoctorAppointmentResponse])
 def get_doctor_appointments(
     db: Session= Depends(get_db),
     current_user: User= Depends(get_current_user)
@@ -138,20 +153,17 @@ def get_doctor_appointments(
         .order_by(Slots.date.desc(), Slots.start_time.desc())
         .all()
     )
-    response = []
-
-    for appointment, slot, patient in appointments:
-        print("PATIENT:", patient.id, patient.name)
-        response.append({
-            "appointment_id": appointment.id,
-            "date": slot.date,
-            "start_time": slot.start_time,
-            "end_time": slot.end_time,
-            "status": appointment.status,
-            "patient_name": patient.name
-        })
-
-    return response
+    return [
+        DoctorAppointmentResponse(
+            appointment_id=appointment.id,
+            date=slot.date,
+            start_time=slot.start_time,
+            end_time=slot.end_time,
+            status=appointment.status,
+            patient_name=patient.name
+        )
+        for appointment, slot, patient in appointments
+    ]
 
 @router.put("/{appointment_id}/cancel")
 def cancel_appointment(

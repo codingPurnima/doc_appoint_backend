@@ -8,7 +8,7 @@ class Appointment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    slot_id = Column(Integer, ForeignKey("slots.id"), nullable=False)
+    slot_id = Column(Integer, ForeignKey("slots.id"), unique= True, nullable=False)
     patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Use SQLAlchemy Enum column type mapping to our StatusEnum
