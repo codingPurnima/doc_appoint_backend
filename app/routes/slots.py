@@ -29,7 +29,7 @@ def generate_slots_for_date(db, doctor, request):
     ).first()
 
     if slot_exists:
-        return 0
+        raise HTTPException(status_code=400, detail="Slots already exist for this date")
     
     start_minutes = time_to_minutes(request.day_start)
     end_minutes = time_to_minutes(request.day_end)

@@ -122,6 +122,36 @@ def get_my_appointments(
         for appointment, slot in results
     ]
 
+@router.get("/doctor")
+def get_doctor_appointments(
+    db: Session= Depends(get_db),
+    current_user: User= Depends(get_current_user)
+):
+    if current_user.role!= RoleEnum.doctor:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    appointments=(
+        db.query(Appointment, Slots, User)
+        .join(Slots, Appointment.slot_id == Slots.id)
+        .join(User, Appointment.patient_id== User.id)
+        .filter(Slots.doctor_id== current_user.id)
+        .order_by(Slots.date.desc(), Slots.start_time.desc())
+        .all()
+    )
+    response = []
+
+    for appointment, slot, patient in appointments:
+        print("PATIENT:", patient.id, patient.name)
+        response.append({
+            "appointment_id": appointment.id,
+            "date": slot.date,
+            "start_time": slot.start_time,
+            "end_time": slot.end_time,
+            "status": appointment.status,
+            "patient_name": patient.name
+        })
+
+    return response
 
 @router.put("/{appointment_id}/cancel")
 def cancel_appointment(
