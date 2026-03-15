@@ -15,5 +15,5 @@ class Slots(Base):
     start_time= Column(Time)
     end_time= Column(Time)
 
-    status= Column(SQLAEnum(StatusEnum), default=StatusEnum.available, nullable=False)
+    status= Column(SQLAEnum(StatusEnum, values_callable=lambda x: [e.value for e in x]), default=StatusEnum.available, nullable=False)
 # date + start_time + doctor_id identifies a slot uniquely

@@ -23,18 +23,40 @@ router = APIRouter(tags=["Slots"])
 
 # Helper function to generate slots automatically
 def generate_slots_for_date(db, doctor, request):
-    slot_exists = db.query(Slots).filter(
-        Slots.doctor_id == doctor.id,
-        Slots.date == request.date
-    ).first()
-
-    if slot_exists:
-        raise HTTPException(status_code=400, detail="Slots already exist for this date")
-    
     start_minutes = time_to_minutes(request.day_start)
     end_minutes = time_to_minutes(request.day_end)
-    duration = request.slot_duration_minutes
 
+    if start_minutes >= end_minutes:
+        raise HTTPException(
+            status_code=400,
+            detail="End time must be after start time"
+        )
+    
+    now= datetime.now()
+    current_minutes= now.hour * 60+ now.minute
+
+    if request.date== date.today() and start_minutes<current_minutes:
+        raise HTTPException(status_code=400, detail="Cannot generate slots for past time")
+    
+    existing_slots = db.query(Slots).filter(
+        Slots.doctor_id == doctor.id,
+        Slots.date == request.date
+    ).all()
+
+    for slot in existing_slots:
+        slot_start= time_to_minutes(slot.start_time)
+        slot_end= time_to_minutes(slot.end_time)
+
+
+        if start_minutes<slot_end and end_minutes>slot_start:
+            raise HTTPException(status_code=400, detail="Slots overlap with existing schedule")   
+    
+    duration = request.slot_duration_minutes
+    if duration<=0:
+        raise HTTPException(
+            status_code=400,
+            detail="Slot duration must be greater than 0"
+        )
     breaks = [
         (time_to_minutes(b.start), time_to_minutes(b.end))
         for b in request.breaks
@@ -82,7 +104,7 @@ def generate_slots(
 ):
     # current_user.role is an instance of RoleEnum; compare against RoleEnum.doctor, earlier you were using string
     if current_user.role != RoleEnum.doctor:
-        raise HTTPException(status_code=403, detail="Not authorized")
+        raise HTTPException(status_code=403, detail="Not authorized")  
     
     slots_created= generate_slots_for_date(db, current_user, request)
 

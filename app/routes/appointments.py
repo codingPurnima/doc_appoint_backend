@@ -62,9 +62,17 @@ def book_appointment(
 
     slot.status = StatusEnum.booked
 
-    db.add(appointment)
-    db.commit()
-    db.refresh(appointment)
+    try:
+        db.add(appointment)
+        db.commit()
+        db.refresh(appointment)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Slot already booked"
+        )
+    
 
     return {
         "message": "Appointment booked successfully",
@@ -78,7 +86,7 @@ def complete_appointment(
     db: Session= Depends(get_db),
     current_user: User= Depends(get_current_user)
 ):
-    if current_user.role != RoleEnum.doctor:
+    if current_user.role != RoleEnum.doctor :
         raise HTTPException(status_code=403, detail="Not authorized")
     
     appointment=(
@@ -86,25 +94,19 @@ def complete_appointment(
         .filter(Appointment.id== appointment_id)
         .first()
     )
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    
     slot=(
         db.query(Slots)
         .filter(Slots.id==appointment.slot_id)
         .first()
     )
-
-    if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found")
     
     appointment.status= StatusEnum.completed
-    slot.status= StatusEnum.completed
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail= "Slot already booked"
-        )
+    slot.status= "completed"
+    db.commit()
 
 
     return {"message": "Appointment marked as completed"}
@@ -132,7 +134,8 @@ def get_my_appointments(
             "status": appointment.status,
             "date": slot.date,
             "start_time": slot.start_time,
-            "end_time": slot.end_time
+            "end_time": slot.end_time,
+            "patient_name": current_user.name
         }
         for appointment, slot in results
     ]
