@@ -124,7 +124,7 @@ def get_my_appointments(
         db.query(Appointment, Slots)
         .join(Slots, Appointment.slot_id== Slots.id)
         .filter(Appointment.patient_id== current_user.id)
-        .order_by(Slots.date.desc())
+        .order_by(Appointment.id.desc())
         .all()
     )
 
