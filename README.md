@@ -82,11 +82,11 @@ uvicorn main:app --reload
 
 Server runs at:
 
-http://127.0.0.1:8000
+https://doc-appoint-backend-meb4.onrender.com
 
 Swagger docs:
 
-http://127.0.0.1:8000/docs
+https://doc-appoint-backend-meb4.onrender.com
 
 ## Frontend Repository
 Frontend for this project is available here:
