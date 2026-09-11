@@ -136,12 +136,13 @@ def get_slots(
 def get_available_slots(
     date: date= Query(...),
     db: Session= Depends(get_db)
-):
+):    
     slots = (
         db.query(Slots)
         .filter(
             Slots.date == date,
-            Slots.status == StatusEnum.available
+            Slots.status == StatusEnum.available,
+            Slots.start_time> datetime.now().time()
         )
         .order_by(Slots.start_time)
         .all()
