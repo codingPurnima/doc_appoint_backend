@@ -124,7 +124,8 @@ def get_slots(
         db.query(Slots)
         .filter(
             Slots.date == date,
-            Slots.doctor_id == current_user.id
+            Slots.doctor_id == current_user.id,
+            Slots.start_time> datetime.now().time()
         )
         .order_by(Slots.start_time)
         .all()
