@@ -32,11 +32,12 @@ def generate_slots_for_date(db, doctor, request):
             detail="End time must be after start time"
         )
     
-    now= datetime.now()
-    current_minutes= now.hour * 60+ now.minute
+    now = datetime.now()
+    current_minutes = now.hour * 60 + now.minute
 
-    if request.date== date.today() and start_minutes<current_minutes:
-        raise HTTPException(status_code=400, detail="Cannot generate slots for past time")
+    # Disallow generating slots for dates in the past (strictly earlier than today).
+    if request.date < date.today():
+        raise HTTPException(status_code=400, detail="Cannot generate slots for past date")
     
     existing_slots = db.query(Slots).filter(
         Slots.doctor_id == doctor.id,
@@ -52,18 +53,35 @@ def generate_slots_for_date(db, doctor, request):
             raise HTTPException(status_code=400, detail="Slots overlap with existing schedule")   
     
     duration = request.slot_duration_minutes
-    if duration<=0:
+    if duration <= 0:
         raise HTTPException(
             status_code=400,
             detail="Slot duration must be greater than 0"
         )
+
     breaks = [
         (time_to_minutes(b.start), time_to_minutes(b.end))
         for b in request.breaks
     ]
 
     slots_created = 0
-    current = start_minutes
+
+    # For same-day requests: if requested start is already past, align the
+    # starting slot to the next slot boundary based on `day_start` and
+    # `slot_duration_minutes` (so we don't start at odd minutes like 10:32).
+    if request.date == date.today():
+        if current_minutes >= end_minutes:
+            return 0
+
+        if start_minutes < current_minutes:
+            delta = current_minutes - start_minutes
+            # ceil division to get next slot index
+            k = (delta + duration - 1) // duration
+            current = start_minutes + k * duration
+        else:
+            current = start_minutes
+    else:
+        current = start_minutes
 
     while current + duration <= end_minutes:
         # Check if slot overlaps a break
