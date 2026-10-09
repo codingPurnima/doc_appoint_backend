@@ -106,7 +106,7 @@ def complete_appointment(
         .first()
     )
 
-    if slot.start_time> datetime.now().time():
+    if datetime.combine(slot.date, slot.start_time) > datetime.now():
         raise HTTPException(status_code=400, detail="Can't complete appointment ahead of time")
     
     appointment.status= StatusEnum.completed
