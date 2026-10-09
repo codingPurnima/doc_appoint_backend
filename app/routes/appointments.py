@@ -1,4 +1,5 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from app.models.enums import StatusEnum, RoleEnum
 from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(tags=["Appointments"])
+ist= ZoneInfo("Asia/Kolkata")
 
 @router.post("/book", status_code=status.HTTP_201_CREATED)
 def book_appointment(
@@ -107,18 +109,11 @@ def complete_appointment(
     )
 
     appointment_datetime = datetime.combine(
-    slot.date,
-    slot.start_time
-)
+        slot.date,
+        slot.start_time
+    ).replace(tzinfo=ist)
 
-    now = datetime.now()
-
-    print("Slot ID:", slot.id)
-    print("Slot date:", slot.date)
-    print("Slot start time:", slot.start_time)
-    print("Combined appointment datetime:", appointment_datetime)
-    print("Server datetime:", now)
-    print("Is appointment in future:", appointment_datetime > now)
+    now = datetime.now(ist)
 
     if appointment_datetime > now:
         raise HTTPException(
