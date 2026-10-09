@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -103,6 +105,9 @@ def complete_appointment(
         .filter(Slots.id==appointment.slot_id)
         .first()
     )
+
+    if slot.start_time> datetime.now().time():
+        raise HTTPException(status_code=400, detail="Can't complete appointment ahead of time")
     
     appointment.status= StatusEnum.completed
     slot.status= "completed"
