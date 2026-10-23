@@ -15,6 +15,8 @@ from app.services.payment_service import get_razorpay_client
 
 import os
 
+from app.services.reservation_service import expire_pending_reservations
+
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -30,7 +32,7 @@ def create_booking_payment(
 ):
     if current_user.role != RoleEnum.patient:
         raise HTTPException(403, "Only patients can book appointments")
-
+    expire_pending_reservations(db)
     try:
         slot = (
             db.query(Slots)

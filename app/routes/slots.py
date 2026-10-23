@@ -10,6 +10,7 @@ from app.models.slot import Slots
 from app.schemas.slot import SlotGenerateRequest
 from app.core.security import get_current_user  
 from app.models.enums import StatusEnum, RoleEnum
+from app.services.reservation_service import expire_pending_reservations
 
 # Helper Functions
 def time_to_minutes(t):
@@ -155,7 +156,8 @@ def get_slots(
 def get_available_slots(
     date: date= Query(...),
     db: Session= Depends(get_db)
-):    
+):   
+    expire_pending_reservations(db) 
     slots = (
         db.query(Slots)
         .filter(
