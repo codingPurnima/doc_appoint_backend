@@ -3,9 +3,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models.appointment import Appointment, StatusEnum
+from app.models.appointment import Appointment
 from app.models.slot import Slots
-from app.models.payment import Payment, PaymentStatus
+from app.models.payment import Payment
+from app.models.enums import PaymentStatusEnum, StatusEnum
 
 
 def expire_pending_reservations(db: Session) -> int:
@@ -43,8 +44,8 @@ def expire_pending_reservations(db: Session) -> int:
                 .first()
             )
 
-            if payment and payment.status == PaymentStatus.created:
-                payment.status = PaymentStatus.failed
+            if payment and payment.status == PaymentStatusEnum.created:
+                payment.status = PaymentStatusEnum.failed
 
             if slot:
                 # Keep the slot unavailable if another valid
