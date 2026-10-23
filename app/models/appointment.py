@@ -14,3 +14,6 @@ class Appointment(Base):
     # Use SQLAlchemy Enum column type mapping to our StatusEnum
     status = Column(SQLAEnum(StatusEnum), default=StatusEnum.booked)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    payment_status= Column(String(20), nullable=False, default="created")
+    reservation_expires_at= Column(DateTime(timezone=True), nullable=True)
