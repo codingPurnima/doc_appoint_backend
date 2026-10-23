@@ -11,3 +11,10 @@ class StatusEnum(str, Enum):
     completed= "completed"
     cancelled= "cancelled"
     frozen= "frozen"
+    pending_payment= "pending_payment"
+
+class PaymentStatusEnum(str, Enum):
+    created = "created"
+    paid = "paid"
+    failed = "failed"
+    refunded = "refunded"
