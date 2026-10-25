@@ -11,3 +11,10 @@ class User(Base):
     phone = Column(String(10), unique= True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(SQLAEnum(RoleEnum), default=RoleEnum.patient, nullable=False)
+
+    doctor_profile= relationship(
+        "DoctorProfile",
+        back_populates="doctor",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
