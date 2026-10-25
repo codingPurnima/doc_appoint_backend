@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_
 
 from app.database import get_db
 from app.models.appointment import Appointment, StatusEnum
@@ -33,6 +34,12 @@ def create_booking_payment(
     if current_user.role != RoleEnum.patient:
         raise HTTPException(403, "Only patients can book appointments")
     expire_pending_reservations(db)
+    patient=(
+        db.query(User)
+        .filter(User.id== current_user.id)
+        .with_for_update()
+        .first()
+    )
     try:
         slot = (
             db.query(Slots)
@@ -72,16 +79,26 @@ def create_booking_payment(
             .join(Slots, Appointment.slot_id == Slots.id)
             .filter(
                 Appointment.patient_id == current_user.id,
-                Appointment.status == StatusEnum.booked,
                 Slots.date == slot.date,
+                or_(
+                    Appointment.status == StatusEnum.booked,
+                    and_(
+                        Appointment.status == StatusEnum.pending_payment,
+                        Appointment.payment_status == "created",
+                        Appointment.reservation_expires_at > now,
+                    ),
+                ),
             )
             .first()
         )
 
         if existing:
-            db.rollback()
             raise HTTPException(
-                400, "You already have a booking for this date"
+                status_code=409,
+                detail=(
+                    "You already have a booked appointment or pending payment "
+                    "for this date. Complete or resolve it before booking another."
+                ),
             )
 
         appointment = Appointment(
@@ -139,83 +156,243 @@ def verify_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    client = get_razorpay_client()
-
-    payment = (
-        db.query(Payment)
-        .filter(Payment.razorpay_order_id == data.razorpay_order_id)
-        .with_for_update()
-        .first()
-    )
-
-    if not payment:
-        raise HTTPException(404, "Payment order not found")
-
-    appointment = (
-        db.query(Appointment)
-        .filter(
-            Appointment.id == payment.appointment_id,
-            Appointment.patient_id == current_user.id,
+    if current_user.role != RoleEnum.patient:
+        raise HTTPException(
+            status_code=403,
+            detail="Only patients can verify appointment payments",
         )
-        .with_for_update()
-        .first()
-    )
-
-    if not appointment:
-        raise HTTPException(404, "Appointment not found")
-
-    if (
-        payment.status == PaymentStatusEnum.paid
-        and appointment.payment_status == "paid"
-    ):
-        return {
-            "message": "Payment already verified",
-            "appointment_id": appointment.id,
-            "status": "booked",
-        }
-
-    if (
-        appointment.status != StatusEnum.pending_payment
-        or appointment.payment_status != "created"
-    ):
-        raise HTTPException(400, "This booking is no longer awaiting payment")
-
-    if (
-        appointment.reservation_expires_at
-        and appointment.reservation_expires_at <= datetime.now(timezone.utc)
-    ):
-        appointment.status = StatusEnum.cancelled
-        appointment.payment_status = "failed"
-        payment.status = PaymentStatusEnum.failed
-        db.commit()
-        raise HTTPException(400, "Reservation expired. Please book another slot.")
 
     try:
-        client.utility.verify_payment_signature({
-            "razorpay_order_id": data.razorpay_order_id,
-            "razorpay_payment_id": data.razorpay_payment_id,
-            "razorpay_signature": data.razorpay_signature,
-        })
-    except Exception:
-        raise HTTPException(400, "Invalid payment signature")
+        # 1. Lock the patient first so concurrent bookings and verifications
+        #    for this patient follow the same locking order.
+        patient = (
+            db.query(User)
+            .filter(User.id == current_user.id)
+            .with_for_update()
+            .first()
+        )
 
-    try:
-        razorpay_payment = client.payment.fetch(data.razorpay_payment_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        # 2. Lock and retrieve the payment.
+        payment = (
+            db.query(Payment)
+            .filter(
+                Payment.razorpay_order_id == data.razorpay_order_id
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not payment:
+            raise HTTPException(
+                status_code=404,
+                detail="Payment order not found",
+            )
+
+        # 3. Lock and retrieve the appointment belonging to this patient.
+        appointment = (
+            db.query(Appointment)
+            .filter(
+                Appointment.id == payment.appointment_id,
+                Appointment.patient_id == current_user.id,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not appointment:
+            raise HTTPException(
+                status_code=404,
+                detail="Appointment not found",
+            )
+
+        # 4. Handle repeated verification safely.
+        if (
+            payment.status == PaymentStatusEnum.paid
+            and appointment.payment_status == "paid"
+        ):
+            if appointment.status == StatusEnum.booked:
+                db.commit()
+                return {
+                    "message": "Payment already verified",
+                    "appointment_id": appointment.id,
+                    "status": "booked",
+                    "payment_status": "paid",
+                }
+
+            # The payment was captured, but this appointment was not confirmed.
+            # Do not report it as booked; its refund/reconciliation needs attention.
+            db.commit()
+            return {
+                "message": (
+                    "Payment was already captured, but the appointment "
+                    "is not confirmed. A refund needs to be resolved."
+                ),
+                "appointment_id": appointment.id,
+                "status": "cancelled",
+                "payment_status": "paid",
+                "refund_required": True,
+            }
+
+        # 5. Only an active pending reservation can be verified.
+        if (
+            appointment.status != StatusEnum.pending_payment
+            or appointment.payment_status != "created"
+            or payment.status != PaymentStatusEnum.created
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="This booking is no longer awaiting payment",
+            )
+
+        # 6. Verify the signature first.
+        client = get_razorpay_client()
+
+        try:
+            client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id": data.razorpay_order_id,
+                    "razorpay_payment_id": data.razorpay_payment_id,
+                    "razorpay_signature": data.razorpay_signature,
+                }
+            )
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payment signature",
+            )
+
+        # 7. Confirm with Razorpay whether the money was actually captured.
+        try:
+            razorpay_payment = client.payment.fetch(
+                data.razorpay_payment_id
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Could not confirm payment status with Razorpay",
+            ) from exc
 
         if razorpay_payment.get("order_id") != payment.razorpay_order_id:
-            raise HTTPException(400, "Payment does not match this order")
+            raise HTTPException(
+                status_code=400,
+                detail="Payment does not match this order",
+            )
 
         if razorpay_payment.get("status") != "captured":
             raise HTTPException(
-                400,
-                "Payment is not captured yet. Please try again shortly.",
+                status_code=400,
+                detail="Payment is not captured yet. Please try again shortly.",
             )
 
+        # 8. The payment is captured. Record that fact before deciding
+        #    whether the appointment can still be confirmed.
         payment.razorpay_payment_id = data.razorpay_payment_id
         payment.status = PaymentStatusEnum.paid
+
+        # Lock the appointment's slot.
+        current_slot = (
+            db.query(Slots)
+            .filter(Slots.id == appointment.slot_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not current_slot:
+            appointment.status = StatusEnum.cancelled
+            appointment.payment_status = "paid"
+            appointment.reservation_expires_at = None
+            db.commit()
+
+            return {
+                "message": (
+                    "Payment was captured, but the appointment slot "
+                    "could not be found. A refund needs to be resolved."
+                ),
+                "appointment_id": appointment.id,
+                "status": "cancelled",
+                "payment_status": "paid",
+                "refund_required": True,
+            }
+
+        # 9. Check whether the reservation expired.
+        now = datetime.now(timezone.utc)
+        reservation_expired = (
+            appointment.reservation_expires_at is not None
+            and appointment.reservation_expires_at <= now
+        )
+
+        # 10. Recheck the daily booking limit immediately before confirmation.
+        #     Another booked appointment on the same date means this payment
+        #     cannot create a second confirmed appointment.
+        conflicting_appointment = (
+            db.query(Appointment)
+            .join(Slots, Appointment.slot_id == Slots.id)
+            .filter(
+                Appointment.patient_id == current_user.id,
+                Appointment.id != appointment.id,
+                Appointment.status == StatusEnum.booked,
+                Slots.date == current_slot.date,
+            )
+            .first()
+        )
+
+        if reservation_expired or conflicting_appointment:
+            # The payment has been captured, so do not mark it as failed.
+            # Preserve the captured-payment record and flag the refund.
+            appointment.status = StatusEnum.cancelled
+            appointment.payment_status = "paid"
+            appointment.reservation_expires_at = None
+
+            # Release the slot only if no other active appointment
+            # still uses it.
+            other_active_appointment = (
+                db.query(Appointment)
+                .filter(
+                    Appointment.slot_id == current_slot.id,
+                    Appointment.id != appointment.id,
+                    Appointment.status.in_(
+                        [
+                            StatusEnum.booked,
+                            StatusEnum.pending_payment,
+                        ]
+                    ),
+                )
+                .first()
+            )
+
+            if not other_active_appointment:
+                current_slot.status = StatusEnum.available
+
+            db.commit()
+
+            if reservation_expired:
+                message = (
+                    "Payment was captured after the reservation expired. "
+                    "A refund needs to be resolved."
+                )
+            else:
+                message = (
+                    "Payment was captured, but you already have an "
+                    "appointment booked for this date. "
+                    "A refund needs to be resolved."
+                )
+
+            return {
+                "message": message,
+                "appointment_id": appointment.id,
+                "status": "cancelled",
+                "payment_status": "paid",
+                "refund_required": True,
+            }
+
+        # 11. All checks passed. Confirm the appointment.
         appointment.payment_status = "paid"
         appointment.status = StatusEnum.booked
         appointment.reservation_expires_at = None
+        current_slot.status = StatusEnum.booked
 
         db.commit()
 
@@ -229,10 +406,13 @@ def verify_payment(
     except HTTPException:
         db.rollback()
         raise
+
     except Exception as exc:
         db.rollback()
-        raise HTTPException(502, "Could not verify payment") from exc
-
+        raise HTTPException(
+            status_code=502,
+            detail="Could not verify payment",
+        ) from exc
 
 @router.get("/pending")
 def get_pending_payments(
