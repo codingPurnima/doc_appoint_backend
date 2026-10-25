@@ -232,3 +232,58 @@ def verify_payment(
     except Exception as exc:
         db.rollback()
         raise HTTPException(502, "Could not verify payment") from exc
+
+
+@router.get("/pending")
+def get_pending_payments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != RoleEnum.patient:
+        raise HTTPException(status_code=403, detail="Patients only")
+
+    # Release expired reservations before retrieving pending payments.
+    expire_pending_reservations(db)
+
+    now = datetime.now(timezone.utc)
+
+    results = (
+        db.query(Appointment, Payment, Slots)
+        .join(Payment, Payment.appointment_id == Appointment.id)
+        .join(Slots, Slots.id == Appointment.slot_id)
+        .filter(
+            Appointment.patient_id == current_user.id,
+            Appointment.status == StatusEnum.pending_payment,
+            Appointment.payment_status == "created",
+            Appointment.reservation_expires_at > now,
+            Payment.status == PaymentStatusEnum.created,
+        )
+        .order_by(Appointment.reservation_expires_at.asc())
+        .all()
+    )
+
+    key_id = os.getenv("RAZORPAY_KEY_ID")
+    if not key_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Payment configuration is missing",
+        )
+
+    pending = []
+
+    for appointment, payment, slot in results:
+        pending.append({
+            "appointment_id": appointment.id,
+            "slot_id": slot.id,
+            "date": slot.date.isoformat(),
+            "start_time": slot.start_time.isoformat(),
+            "end_time": slot.end_time.isoformat(),
+            "order_id": payment.razorpay_order_id,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "key_id": key_id,
+            "reservation_expires_at":
+                appointment.reservation_expires_at.isoformat(),
+        })
+
+    return {"pending_payments": pending}
