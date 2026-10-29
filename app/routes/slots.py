@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, date
 
 from app.database import get_db
 from app.models.slot import Slots
-from app.schemas.slot import SlotGenerateRequest
+from app.schemas.slot import SlotGenerateRequest, SlotGenerateRangeRequest
 from app.core.security import get_current_user  
 from app.models.enums import StatusEnum, RoleEnum
 from app.services.reservation_service import expire_pending_reservations
@@ -132,6 +132,115 @@ def generate_slots(
         "slots_created": slots_created
     }
 
+@router.post("/generate-range")
+def generate_slots_for_range(
+    request: SlotGenerateRangeRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if current_user.role != RoleEnum.doctor:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized",
+        )
+
+    # Validate the common schedule before processing dates.
+    if request.start_date < date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="Start date cannot be in the past",
+        )
+
+    start_minutes = time_to_minutes(request.day_start)
+    end_minutes = time_to_minutes(request.day_end)
+
+    if start_minutes >= end_minutes:
+        raise HTTPException(
+            status_code=400,
+            detail="End time must be after start time",
+        )
+
+    if request.slot_duration_minutes <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Slot duration must be greater than 0",
+        )
+
+    for item in request.breaks:
+        break_start = time_to_minutes(item.start)
+        break_end = time_to_minutes(item.end)
+
+        if break_start >= break_end:
+            raise HTTPException(
+                status_code=400,
+                detail="Break end time must be after break start time",
+            )
+
+        if (
+            break_start < start_minutes
+            or break_end > end_minutes
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Breaks must fall within working hours",
+            )
+
+    total_created = 0
+    results = []
+
+    for offset in range(request.duration_days):
+        target_date = request.start_date + timedelta(days=offset)
+
+        # Optionally exclude Saturday and Sunday.
+        if request.weekdays_only and target_date.weekday() >= 5:
+            results.append({
+                "date": target_date.isoformat(),
+                "status": "skipped",
+                "slots_created": 0,
+                "reason": "Weekend excluded",
+            })
+            continue
+
+        daily_request = SlotGenerateRequest(
+            date=target_date,
+            day_start=request.day_start,
+            day_end=request.day_end,
+            slot_duration_minutes=request.slot_duration_minutes,
+            breaks=request.breaks,
+        )
+
+        try:
+            created = generate_slots_for_date(
+                db,
+                current_user,
+                daily_request,
+            )
+
+            total_created += created
+
+            results.append({
+                "date": target_date.isoformat(),
+                "status": "success",
+                "slots_created": created,
+            })
+
+        except HTTPException as exc:
+            # The existing helper rejects overlapping schedules.
+            # Skip that date and continue with the others.
+            db.rollback()
+
+            results.append({
+                "date": target_date.isoformat(),
+                "status": "skipped",
+                "slots_created": 0,
+                "reason": exc.detail,
+            })
+
+    return {
+        "message": "Slot generation completed",
+        "total_slots_created": total_created,
+        "results": results,
+    }
 
 @router.get("")
 def get_slots(
