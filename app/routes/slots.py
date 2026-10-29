@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from enum import Enum
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, date
+from sqlalchemy import and_, or_
+from typing import Optional
 
 from app.database import get_db
 from app.models.slot import Slots
@@ -244,27 +246,35 @@ def generate_slots_for_range(
 
 @router.get("")
 def get_slots(
-    date: date = Query(...),
+    date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     today = datetime.now().date()
+    current_time = datetime.now().time()
 
     query = db.query(Slots).filter(
-        Slots.date == date,
         Slots.doctor_id == current_user.id,
+        Slots.date >= today,
     )
 
-    # Only hide past times when viewing today's schedule.
-    if date == today:
-        query = query.filter(
-            Slots.start_time > datetime.now().time()
+    if date is not None:
+        query = query.filter(Slots.date == date)
+
+    query = query.filter(
+        or_(
+            Slots.date > today,
+            and_(
+                Slots.date == today,
+                Slots.start_time > current_time,
+            ),
         )
+    )
 
-    slots = query.order_by(Slots.start_time).all()
-
-    return slots
-
+    return query.order_by(
+        Slots.date,
+        Slots.start_time,
+    ).all()
 
 @router.get("/available")
 def get_available_slots(
