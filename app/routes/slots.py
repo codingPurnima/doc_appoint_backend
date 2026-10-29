@@ -284,6 +284,8 @@ def get_available_slots(
     expire_pending_reservations(db)
 
     today = datetime.now().date()
+    if date < today:
+        return []
 
     query = db.query(Slots).filter(
         Slots.date == date,
