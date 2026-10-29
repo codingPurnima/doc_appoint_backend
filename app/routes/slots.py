@@ -244,39 +244,50 @@ def generate_slots_for_range(
 
 @router.get("")
 def get_slots(
-    date: date= Query(...), # ... means that it is a required Python parameter which must be provided and that it has no default value
-    db: Session= Depends(get_db),
-    current_user = Depends(get_current_user)
+    date: date = Query(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    slots=(
-        db.query(Slots)
-        .filter(
-            Slots.date == date,
-            Slots.doctor_id == current_user.id,
-            Slots.start_time> datetime.now().time()
-        )
-        .order_by(Slots.start_time)
-        .all()
+    today = datetime.now().date()
+
+    query = db.query(Slots).filter(
+        Slots.date == date,
+        Slots.doctor_id == current_user.id,
     )
+
+    # Only hide past times when viewing today's schedule.
+    if date == today:
+        query = query.filter(
+            Slots.start_time > datetime.now().time()
+        )
+
+    slots = query.order_by(Slots.start_time).all()
+
     return slots
 
 
 @router.get("/available")
 def get_available_slots(
-    date: date= Query(...),
-    db: Session= Depends(get_db)
-):   
-    expire_pending_reservations(db) 
-    slots = (
-        db.query(Slots)
-        .filter(
-            Slots.date == date,
-            Slots.status == StatusEnum.available,
-            Slots.start_time> datetime.now().time()
-        )
-        .order_by(Slots.start_time)
-        .all()
+    date: date = Query(...),
+    db: Session = Depends(get_db),
+):
+    expire_pending_reservations(db)
+
+    today = datetime.now().date()
+
+    query = db.query(Slots).filter(
+        Slots.date == date,
+        Slots.status == StatusEnum.available,
     )
+
+    # Only hide past times when viewing today's available slots.
+    if date == today:
+        query = query.filter(
+            Slots.start_time > datetime.now().time()
+        )
+
+    slots = query.order_by(Slots.start_time).all()
+
     return slots
 
 
