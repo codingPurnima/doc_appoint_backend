@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 from app.models.user import User
+from app.models.enums import ApplicationStatusEnum
 
 class DoctorProfile(Base):
     __tablename__='doctor_profiles'
@@ -19,6 +20,12 @@ class DoctorProfile(Base):
     bio= Column(String(1000), nullable=True)
     profile_image_url= Column(String(500), nullable=True)
     is_approved= Column(Boolean, nullable=False, default= False)
+
+    application_status = Column(
+        SQLAEnum(ApplicationStatusEnum, native_enum=False),
+        nullable=False,
+        default=ApplicationStatusEnum.pending,
+    )
 
     doctor= relationship("User", back_populates="doctor_profile")
 
