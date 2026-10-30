@@ -3,6 +3,7 @@ from app.routes import auth, payments, slots, appointments, users, doctor_profil
 from app.database import Base, engine
 from app.models.payment import Payment
 from app.models.doctor_profile import DoctorProfile
+from app.models.doctor_approval_token import DoctorApprovalToken
 from fastapi.middleware.cors import CORSMiddleware
 
 
