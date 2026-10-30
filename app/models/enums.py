@@ -18,3 +18,8 @@ class PaymentStatusEnum(str, Enum):
     paid = "paid"
     failed = "failed"
     refunded = "refunded"
+
+class ApplicationStatusEnum(str, Enum):
+    pending= "pending"
+    approved= "approved"
+    rejected= "rejected"
