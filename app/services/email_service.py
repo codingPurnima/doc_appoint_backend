@@ -1,19 +1,43 @@
 
 import os
+import json
+import base64
+import asyncio
 from email.message import EmailMessage
-import aiosmtplib
+
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 
 
-async def send_doctor_application_email(
-    doctor_details: dict,
-    review_url: str,
-):
+SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+
+
+def _send_email(doctor_details: dict, review_url: str):
+    token_json = os.getenv("GMAIL_TOKEN_JSON")
     sender = os.getenv("SMTP_EMAIL")
-    password = os.getenv("SMTP_PASSWORD")
     admin_email = os.getenv("DOCTOR_APPLICATION_ADMIN_EMAIL")
 
-    if not sender or not password or not admin_email:
-        raise RuntimeError("Email configuration is incomplete")
+    if not token_json or not sender or not admin_email:
+        raise RuntimeError("Gmail configuration is incomplete")
+
+    credentials = Credentials.from_authorized_user_info(
+        json.loads(token_json),
+        SCOPES,
+    )
+
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+
+    if not credentials.valid:
+        raise RuntimeError("Gmail credentials are invalid or expired")
+
+    service = build(
+        "gmail",
+        "v1",
+        credentials=credentials,
+        cache_discovery=False,
+    )
 
     message = EmailMessage()
     message["From"] = f"DocAppoint <{sender}>"
@@ -34,18 +58,28 @@ Consultation Fee: Rs. {doctor_details['consultation_fee']}
 Experience: {doctor_details['experience_years']} years
 
 Review this application:
-
 {review_url}
 
-These links expire after 48 hours.
+This link expires after 48 hours.
 """
     )
 
-    await aiosmtplib.send(
-        message,
-        hostname="smtp.gmail.com",
-        port=587,
-        start_tls=True,
-        username=sender,
-        password=password,
+    encoded_message = base64.urlsafe_b64encode(
+        message.as_bytes()
+    ).decode()
+
+    service.users().messages().send(
+        userId="me",
+        body={"raw": encoded_message},
+    ).execute()
+
+
+async def send_doctor_application_email(
+    doctor_details: dict,
+    review_url: str,
+):
+    await asyncio.to_thread(
+        _send_email,
+        doctor_details,
+        review_url,
     )
