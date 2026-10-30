@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str
 
     SMTP_EMAIL: str
-    SMTP_PASSWORD: str
     DOCTOR_APPLICATION_ADMIN_EMAIL: str
     BACKEND_PUBLIC_URL: str
 
