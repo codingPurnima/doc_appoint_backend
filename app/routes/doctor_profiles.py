@@ -121,14 +121,16 @@ async def submit_doctor_application(
         )
 
     except Exception as e:
-        db.rollback()
+        import traceback
 
-        print(f"DOCTOR APPLICATION EMAIL ERROR: {repr(e)}")
+        print("========== DOCTOR APPLICATION EMAIL ERROR ==========")
+        traceback.print_exc()
+        print("====================================================")
 
-    raise HTTPException(
-        status_code=503,
-        # detail=f"Email notification failed: {str(e)}",
-    )
+        raise HTTPException(
+            status_code=503,
+            detail="Application saved, but email notification failed.",
+        )
 
     return {
         "message": "Application submitted. Awaiting verification.",
